@@ -1,11 +1,25 @@
 #include <sycl/sycl.hpp>
 #include <iostream>
+#include <chrono>
+#include <cstdlib>
+
+// #define print
 
 using namespace std;
 using namespace sycl;
 
+template <
+    class result_t = std::chrono::milliseconds,
+    class clock_t = std::chrono::steady_clock,
+    class duration_t = std::chrono::milliseconds>
+auto since(std::chrono::time_point<clock_t, duration_t> const &start)
+{
+    return std::chrono::duration_cast<result_t>(clock_t::now() - start);
+}
+
 void print_matrix(const float *matrix, const int m, const int n)
 {
+#ifdef print
     cout << "[";
     for (int row = 0; row < m; row++)
     {
@@ -26,6 +40,7 @@ void print_matrix(const float *matrix, const int m, const int n)
     }
     cout << "]"
          << "\n\n";
+#endif
 }
 
 void fill_matrix(float *matrix, const int m, const int n, float (*fn)(unsigned row, unsigned col))
@@ -39,59 +54,90 @@ void fill_matrix(float *matrix, const int m, const int n, float (*fn)(unsigned r
     }
 }
 
-void compute_gpu(const float *a, const float *b, const float *c, unsigned m, unsigned n, unsigned p)
+void compute_gpu(queue &q, const float *a, const float *b, float *c, unsigned m, unsigned n, unsigned p)
 {
-    queue q(default_selector_v);
-    cout << "Device: " << q.get_device().get_info<info::device::name>() << "\n";
+    buffer<float> a_buf(a, m * n);
+    buffer<float> b_buf(b, n * p);
+    buffer<float> c_buf(c, m * p);
 
+    q.submit([&](auto &h)
+             {
+        // Read from a and b, write to c
+        accessor a(a_buf, h, read_only);
+        accessor b(b_buf, h, read_only);
+        accessor c(c_buf, h, sycl::write_only, sycl::no_init);
+
+        h.parallel_for(range(m, p), [=](auto index) 
+        {
+            // Threading index that iterates over C.
+            int row = index[0];
+            int col = index[1];
+            auto sum = 0.0;
+            // Compute result of ONE element of C
+            for (int i = 0; i < n; i++)
+                sum += a[row * n + i] * b[i * p + col];
+            c[row * p + col] = sum;
+        }); });
+}
+
+void compute_cpu(const float *a, const float *b, float *c, unsigned m, unsigned n, unsigned p)
+{
+    for (int row = 0; row < m; row++)
     {
-        buffer<float, 1> a_buf(a, range(m * n));
-        buffer<float, 1> b_buf(b, range(n * p));
-        buffer<float, 1> c_buf(c, range(m * p));
-
-        q.submit([&](auto &h)
-                {
-            // Read from a and b, write to c
-            accessor a(a_buf, read_only);
-            accessor b(b_buf, read_only);
-            accessor c(c_buf, sycl::write_only, sycl::no_init);
-            sycl::stream out(1024, 256, h);
-
-            h.parallel_for(range(m, p), [=](auto index) 
-            {
-                // Threading index that iterates over C.
-                int row = index[0];
-                int col = index[1];
-                auto sum = 0.0;
-                // Compute result of ONE element of C
-                for (int i = 0; i < n; i++)
-                    sum += a[row * n + i] * b[i * p + col];
-                c[row * p + col] = sum;
-                out << sum << "\n";
-            }); 
-        });
-        q.wait();
+        for (int col = 0; col < n; col++)
+        {
+            auto sum = 0.0;
+            // Compute result of ONE element of C
+            for (int i = 0; i < n; i++)
+                sum += a[row * n + i] * b[i * p + col];
+            c[row * p + col] = sum;
+        }
     }
 }
 
-int main()
+int main(int argc, char **argv)
 {
-    constexpr int m = 2, n = 4, p = 6;
+    if (argc < 4)
+    {
+        cout << "USAGE: ./example M N P"
+             << "\n";
+        return 1;
+    }
+
+    int m = atoi(argv[1]), n = atoi(argv[2]), p = atoi(argv[3]);
 
     float *a = new float[m * n];
     float *b = new float[n * p];
     float *c = new float[m * p];
 
-    fill_matrix(a, m, n, [](unsigned row, unsigned col){return 1.0f;});
-    fill_matrix(b, n, p, [](unsigned row, unsigned col){return (float)(row*n+col);});
-    fill_matrix(c, m, p, [](unsigned row, unsigned col){return 0.0f;});
+    fill_matrix(a, m, n, [](unsigned row, unsigned col)
+                { return 1.0f; });
+    fill_matrix(b, n, p, [](unsigned row, unsigned col)
+                { return (float)(row + 1); });
+    fill_matrix(c, m, p, [](unsigned row, unsigned col)
+                { return 0.0f; });
+
+    queue q(gpu_selector_v);
+    cout << "[Device]\t" << q.get_device().get_info<info::device::name>() << "\n";
 
     print_matrix(a, m, n);
     print_matrix(b, n, p);
     print_matrix(c, m, p);
 
-    compute_gpu(a, b, c, m, n, p);
+    auto start = std::chrono::steady_clock::now();
+    compute_gpu(q, a, b, c, m, n, p);
+    cout << "[GPU]\t\tElapsed(ms)=" << since(start).count() << "\n";
 
     print_matrix(c, m, p);
+
+    start = std::chrono::steady_clock::now();
+    compute_cpu(a, b, c, m, n, p);
+    cout << "[CPU]\t\tElapsed(ms)=" << since(start).count() << "\n";
+
+    print_matrix(c, m, p);
+
+    delete[] a;
+    delete[] b;
+    delete[] c;
     return 0;
 }
