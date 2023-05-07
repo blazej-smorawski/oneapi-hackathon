@@ -6,4 +6,4 @@ COPY example.cpp example.cpp
 
 RUN icpx -fsycl example.cpp -O3 -o example
 
-CMD sycl-ls; ./example
+ENTRYPOINT ["./example"]
