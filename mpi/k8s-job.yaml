@@ -28,13 +28,13 @@ spec:
             - "2"
             #- ls
             - /home/mpiuser/example
-            - "10000"
-            - "10000"
-            - "10000"
+            - "2000"
+            - "2000"
+            - "2000"
             resources:
               limits:
                 cpu: 1
-                memory: 1Gi
+                memory: 4Gi
     Worker:
       replicas: 2
       template:
@@ -55,5 +55,5 @@ spec:
             resources:
               limits:
                 cpu: 1
-                memory: 1Gi
+                memory: 4Gi
                 gpu.intel.com/i915: 1

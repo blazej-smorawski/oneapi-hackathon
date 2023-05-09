@@ -81,6 +81,7 @@ void compute_gpu(queue &q, const float *a, const float *b, float *c, unsigned m,
                 sum += a[row * n + i] * b[i * p + col];
             c[row * p + col] = sum;
         }); });
+    q.wait();
 }
 
 void compute_cpu(const float *a, const float *b, float *c, unsigned m, unsigned n, unsigned p)
