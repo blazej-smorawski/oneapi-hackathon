@@ -3,8 +3,10 @@
 #include <iostream>
 #include <chrono>
 #include <cstdlib>
+#include <limits.h>
+#include <unistd.h>
 
-//#define print
+// #define print
 
 using namespace std;
 using namespace sycl;
@@ -96,9 +98,30 @@ void compute_cpu(const float *a, const float *b, float *c, unsigned m, unsigned 
     }
 }
 
+bool validate_result(const float *a, unsigned m, unsigned n, float value)
+{
+    for (int row = 0; row < m; row++)
+    {
+        for (int col = 0; col < n; col++)
+        {
+            if (abs(a[row * n + col] - value) > 0.001f)
+            {
+                cout << "[ERROR]\t\ta[" << row << "][" << col << "]==" << a[row * n + col] << " != " << value << "\n";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     MPI_Init(NULL, NULL);
+
+    int len;
+    char hostname[MPI_MAX_PROCESSOR_NAME + 1];
+    MPI_Get_processor_name(hostname, &len);
+    cout << "[HOST]\t\t" << hostname << "\n";
 
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -123,9 +146,10 @@ int main(int argc, char **argv)
     queue q(gpu_selector_v);
     cout << "[Device]\t" << q.get_device().get_info<info::device::name>() << "\n";
 
-    if(world_rank == 0) {
+    if (world_rank == 0)
+    {
         fill_matrix(a, m, n, [](unsigned row, unsigned col)
-                { return 1.0f; });
+                    { return 1.0f; });
         fill_matrix(b, n, p, [](unsigned row, unsigned col)
                     { return (float)(row + 1); });
         fill_matrix(c, m, p, [](unsigned row, unsigned col)
@@ -134,33 +158,45 @@ int main(int argc, char **argv)
 
     auto start = std::chrono::steady_clock::now();
 
-    if(world_rank == 0) {
-        MPI_Send(a, m*n, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
-        MPI_Send(b, n*p, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
-    } else {
-        offset = (m/2) * n;
-        MPI_Recv(a, m*n, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        MPI_Recv(b, n*p, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    if (world_rank == 0)
+    {
+        MPI_Send(a, m * n, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
+        MPI_Send(b, n * p, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
+    }
+    else
+    {
+        offset = (m / 2) * n;
+        MPI_Recv(a, m * n, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(b, n * p, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
 
-    print_matrix(a, m, n);
-    print_matrix(b, n, p);
+    compute_gpu(q, a + offset, b, c + offset, m / 2, n, p);
     print_matrix(c, m, p);
 
-    compute_gpu(q, a + offset, b, c + offset, m/2, n, p);
-    print_matrix(c, m, p);
+    if (world_rank == 0)
+    {
+        int other_offset = (m / 2) * n;
+        MPI_Recv(c + other_offset, m / 2 * p, MPI_FLOAT, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        cout << "[FINAL]\t\t"
+             << "\n";
+        cout << "[MPI]\t\tElapsed(ms)=" << since(start).count() << "\n";
+        print_matrix(c, m, p);
 
-    if(world_rank == 0) {
-        int other_offset = (m/2) * n;
-        MPI_Recv(c + other_offset, m/2 * p, MPI_FLOAT, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    } else {
-        MPI_Send(c + offset, m/2 * p, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
+        if (validate_result(c, m, p, (float)(n + 1) / 2 * n))
+        {
+            cout << "[RESULT]\tCORRECT"
+                 << "\n";
+        }
+        else
+        {
+            cout << "[RESULT]\tWRONG"
+                 << "\n";
+        }
     }
-
-    cout << "[GPU]\t\tElapsed(ms)=" << since(start).count() << "\n";
-
-    cout<< "[FINAL]\t\t" << "\n";
-    print_matrix(c, m, p);
+    else
+    {
+        MPI_Send(c + offset, m / 2 * p, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
+    }
 
     delete[] a;
     delete[] b;

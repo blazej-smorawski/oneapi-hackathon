@@ -1,7 +1,7 @@
 apiVersion: kubeflow.org/v2beta1
 kind: MPIJob
 metadata:
-  name: pi
+  name: example
 spec:
   slotsPerWorker: 1
   runPolicy:
@@ -14,16 +14,23 @@ spec:
       template:
         spec:
           containers:
-          - image: sycl-example-mpi
+          - image: ghcr.io/blazej-smorawski/example-sycl-mpi:latest
             imagePullPolicy: Always
             name: mpi-launcher
             securityContext:
               runAsUser: 1000
+              runAsGroup: 109
             args:
             - mpirun
+            - -genv 
+            - I_MPI_DEBUG=2
             - -n
             - "2"
+            #- ls
             - /home/mpiuser/example
+            - "10000"
+            - "10000"
+            - "10000"
             resources:
               limits:
                 cpu: 1
@@ -33,22 +40,20 @@ spec:
       template:
         spec:
           containers:
-          - image: sycl-example-mpi
+          - image: ghcr.io/blazej-smorawski/example-sycl-mpi:latest
             imagePullPolicy: Always
             name: mpi-worker
             securityContext:
               runAsUser: 1000
+              runAsGroup: 109
             command:
             args:
             - /usr/sbin/sshd
             - -De
             - -f
             - /home/mpiuser/.sshd_config
-            readinessProbe:
-              tcpSocket:
-                port: 2222
-              initialDelaySeconds: 2
             resources:
               limits:
                 cpu: 1
                 memory: 1Gi
+                gpu.intel.com/i915: 1
