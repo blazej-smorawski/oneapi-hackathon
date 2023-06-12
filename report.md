@@ -286,3 +286,81 @@ RUN icpx -fsycl example.cpp -O3 -o example
 
 ENTRYPOINT ["./example"]
 ```
+
+# Dodatek: Instalacja implementacji MPI na systemach z rodziny *Debian*
+
+Instalacja środowiska *MPI* i sterowników do kart graficznych firmy **Intel** na systemach operacyjnych korzystających z menadżera pakietów *apt* jest bardzo prosta i wymaga kilku prostych poleceń:
+
+Pierwszym etapem jest instalacja repozytorium **Intel(R) oneAPI**
+
+```bash
+apt-get update && apt-get upgrade -y && \
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+curl ca-certificates gnupg gpg-agent software-properties-common && \
+rm -rf /var/lib/apt/lists/*
+
+curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS-2023.PUB| apt-key add - \
+echo "deb [trusted=yes] https://apt.repos.intel.com/oneapi all main " > /etc/apt/sources.list.d/oneAPI.list
+```
+
+Następnie możemy zainstalować repozytorium **Intel(R) GPU** jeśli planujemy wykorzystywać karty graficzne firmy **Intel**:
+
+```bash
+apt-get update && apt-get upgrade -y && \
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+curl ca-certificates gnupg gpg-agent software-properties-common && \
+rm -rf /var/lib/apt/lists/*
+
+curl -fsSL https://repositories.intel.com/graphics/intel-graphics.key | apt-key add -
+echo "deb [trusted=yes arch=amd64] https://repositories.intel.com/graphics/ubuntu focal-devel main" > /etc/apt/sources.list.d/intel-graphics.list
+```
+
+Po zainstalowaniu odpowiednich repozytoriów możemy zainstalować wybrane przez nas pakiety. W tym przykładzie wybraliśmy paczkę *runtime*, która zawiera środowisko uruchomieniowe dla *oneAPI*, czyli między innymi biblioteki oraz pliki wykonywalne potrzebne dla działania *MPI*. Dodatkowo instalujemy *level-zero*, czyli bardzo przystępny sterownik pozwalający na wykorzystywanie akceleracji *GPU*.
+
+```bash
+apt-get update && apt-get upgrade -y && \
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+sudo intel-oneapi-runtime-dpcpp-cpp intel-level-zero-gpu level-zero && \
+rm -rf /var/lib/apt/lists/*
+```
+
+# Dodatek: Uruchamianie *MPI* w środowisku *k8s*
+
+Kroki potrzebne do uruchomienia *MPI* w środowisku *kubernetes*:
+
+1. Instalacja *MPI-operator* 
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubeflow/mpi-operator/v0.4.0/deploy/v2beta1/mpi-operator.yaml
+```
+2. Przygotowanie odpowiedniego obrazu zawierającego odpowienie środowisko *ssh*, *MPI* oraz nasz plik wykonywalny: 
+```Dockerfile
+ARG BASE_LABEL
+
+FROM mpioperator/intel-builder:${BASE_LABEL} as builder
+
+COPY example-mpi.cpp /src/example-mpi.cpp
+RUN bash -c "source /opt/intel/oneapi/setvars.sh && icpx -fsycl -lmpi /src/example-mpi.cpp -O3 -o /example"
+
+FROM mpioperator/intel:${BASE_LABEL}
+
+# Instalacja *MPI* oraz *level-zero* w ten sam sposób jak powyżej
+
+COPY --from=builder /example /home/mpiuser/example
+```
+3. Budowanie obrazu:
+```bash
+docker build . -t ghcr.io/blazej-smorawski/example-sycl-cpu
+```
+4. Publikacja obrazu, aby był on dostępny dla każdego węzła obliczeniowego:
+```bash
+docker push ghcr.io/blazej-smorawski/example-sycl-cpu
+```
+5. Stworzenie pliku zawierającego definicję *custom-resource* *MPIJob*
+6. Uruchomienie obliczeń:
+```bash
+kubectl apply -f k8s-job.yaml
+```
+7. Pracę naszego zadania możemy obserwować za pomocą:
+```bash
+kubectl describe mpijobs.kubeflow.org
+```
