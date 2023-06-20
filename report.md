@@ -324,6 +324,10 @@ sudo intel-oneapi-runtime-dpcpp-cpp intel-level-zero-gpu level-zero && \
 rm -rf /var/lib/apt/lists/*
 ```
 
+# Źródła
+
+Kod źródłowy wykorzystany do powyżej opisanych przykładów oraz gotowe kontenery znajdują się w repozytorium *git*: https://github.com/blazej-smorawski/oneapi-hackathon
+
 # Dodatek: Uruchamianie *MPI* w środowisku *k8s*
 
 Kroki potrzebne do uruchomienia *MPI* w środowisku *kubernetes*:
